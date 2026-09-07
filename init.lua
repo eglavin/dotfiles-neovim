@@ -99,9 +99,7 @@ do
   vim.g.maplocalleader = ' '
 
   -- Disable unused built-in plugins to shave startup time.
-  --  netrw is replaced by neo-tree; matchit/matchparen are unused.
-  vim.g.loaded_netrw = 1
-  vim.g.loaded_netrwPlugin = 1
+  -- matchit/matchparen are unused
   vim.g.loaded_matchit = 1
 
   -- Set to true if you have a Nerd Font installed and selected in the terminal

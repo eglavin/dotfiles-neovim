@@ -7,27 +7,28 @@ vim.pack.add {
   'https://github.com/MunifTanjim/nui.nvim',
 }
 
--- neo-tree pulls in ~40ms of Lua; defer that until the first time the tree is
--- opened. `setup()` runs on every toggle (a no-op-ish re-merge once loaded) so
--- config edits apply after `:source` without a full restart. The mapping toggles
--- directly rather than relying on neo-tree's own buffer-local `\` binding, which
--- isn't applied when setup runs this late.
-local function toggle()
-  require('neo-tree').setup({
-    filesystem = {
-      filtered_items = {
-        visible = true,
-        hide_dotfiles = false,
-        hide_gitignored = false,
-      },
-      window = {
-        mappings = {
-          ['\\'] = 'close_window',
-        },
+-- `setup()` only stores config + wires autocmds (~cheap); the expensive source
+-- loading is deferred by neo-tree itself until the tree is first opened. Run it
+-- now, though, so `hijack_netrw_behavior` is in effect before the directory
+-- buffer's BufEnter fires -- otherwise `nvim <dir>` pops the tree open on its own.
+require('neo-tree').setup {
+  -- Only open when asked (the `\` mapping / `:Neotree`), never by opening a folder.
+  filesystem = {
+    hijack_netrw_behavior = 'disabled',
+    filtered_items = {
+      visible = true,
+      hide_dotfiles = false,
+      hide_gitignored = false,
+    },
+    window = {
+      mappings = {
+        ['\\'] = 'close_window',
       },
     },
-  })
+  },
+}
 
+local function toggle()
   if vim.bo.filetype == 'neo-tree' then
     vim.cmd 'Neotree close'
   else
