@@ -98,6 +98,12 @@ do
   vim.g.mapleader = ' '
   vim.g.maplocalleader = ' '
 
+  -- Disable unused built-in plugins to shave startup time.
+  --  netrw is replaced by neo-tree; matchit/matchparen are unused.
+  vim.g.loaded_netrw = 1
+  vim.g.loaded_netrwPlugin = 1
+  vim.g.loaded_matchit = 1
+
   -- Set to true if you have a Nerd Font installed and selected in the terminal
   vim.g.have_nerd_font = true
 
@@ -328,6 +334,9 @@ end
 ---@return string
 local function gh(repo) return 'https://github.com/' .. repo end
 
+-- Defers appearance-only / interaction-only plugin setup until after first paint.
+local startup = require 'kickstart.util'
+
 -- ============================================================
 -- SECTION 4: UI / CORE UX PLUGINS
 -- guess-indent, gitsigns, which-key, colorscheme, todo-comments, mini modules
@@ -354,30 +363,34 @@ do
   -- See `:help gitsigns` to understand what each configuration key does.
   -- Adds git related signs to the gutter, as well as utilities for managing changes
   vim.pack.add { gh 'lewis6991/gitsigns.nvim' }
-  require('gitsigns').setup {
-    signs = {
-      add = { text = '+' }, ---@diagnostic disable-line: missing-fields
-      change = { text = '~' }, ---@diagnostic disable-line: missing-fields
-      delete = { text = '_' }, ---@diagnostic disable-line: missing-fields
-      topdelete = { text = '‾' }, ---@diagnostic disable-line: missing-fields
-      changedelete = { text = '~' }, ---@diagnostic disable-line: missing-fields
-    },
-  }
+  startup.on_ui_ready(function()
+    require('gitsigns').setup {
+      signs = {
+        add = { text = '+' }, ---@diagnostic disable-line: missing-fields
+        change = { text = '~' }, ---@diagnostic disable-line: missing-fields
+        delete = { text = '_' }, ---@diagnostic disable-line: missing-fields
+        topdelete = { text = '‾' }, ---@diagnostic disable-line: missing-fields
+        changedelete = { text = '~' }, ---@diagnostic disable-line: missing-fields
+      },
+    }
+  end)
 
   -- Useful plugin to show you pending keybinds.
   vim.pack.add { gh 'folke/which-key.nvim' }
-  require('which-key').setup {
-    -- Delay between pressing a key and opening which-key (milliseconds)
-    delay = 0,
-    icons = { mappings = vim.g.have_nerd_font },
-    -- Document existing key chains
-    spec = {
-      { '<leader>s', group = '[S]earch', mode = { 'n', 'v' } },
-      { '<leader>t', group = '[T]oggle' },
-      { '<leader>h', group = 'Git [H]unk', mode = { 'n', 'v' } }, -- Enable gitsigns recommended keymaps first
-      { 'gr', group = 'LSP Actions', mode = { 'n' } },
-    },
-  }
+  startup.on_ui_ready(function()
+    require('which-key').setup {
+      -- Delay between pressing a key and opening which-key (milliseconds)
+      delay = 0,
+      icons = { mappings = vim.g.have_nerd_font },
+      -- Document existing key chains
+      spec = {
+        { '<leader>s', group = '[S]earch', mode = { 'n', 'v' } },
+        { '<leader>t', group = '[T]oggle' },
+        { '<leader>h', group = 'Git [H]unk', mode = { 'n', 'v' } }, -- Enable gitsigns recommended keymaps first
+        { 'gr', group = 'LSP Actions', mode = { 'n' } },
+      },
+    }
+  end)
 
   -- [[ Colorscheme ]]
   -- You can easily change to a different colorscheme.
@@ -400,7 +413,7 @@ do
 
   -- Highlight todo, notes, etc in comments
   vim.pack.add { gh 'folke/todo-comments.nvim' }
-  require('todo-comments').setup { signs = false }
+  startup.on_ui_ready(function() require('todo-comments').setup { signs = false } end)
 
   -- [[ mini.nvim ]]
   --  A collection of various small independent plugins/modules
@@ -492,28 +505,49 @@ do
   -- NOTE: You can install multiple plugins at once
   vim.pack.add(telescope_plugins)
 
-  -- See `:help telescope` and `:help telescope.setup()`
-  require('telescope').setup {
-    -- You can put your default mappings / updates / etc. in here
-    --  All the info you're looking for is in `:help telescope.setup()`
-    --
-    -- defaults = {
-    --   mappings = {
-    --     i = { ['<c-enter>'] = 'to_fuzzy_refine' },
-    --   },
-    -- },
-    -- pickers = {}
-    extensions = {
-      ['ui-select'] = { require('telescope.themes').get_dropdown() },
-    },
-  }
-
-  -- Enable Telescope extensions if they are installed
-  pcall(require('telescope').load_extension, 'fzf')
-  pcall(require('telescope').load_extension, 'ui-select')
+  -- Telescope's Lua modules cost ~50ms to load, so defer that until the first
+  -- picker is actually used. `ensure_telescope` runs the real setup once; the
+  -- `builtin` proxy below returns wrappers that trigger it, so every keymap and
+  -- the `LspAttach` handler further down stay written exactly as before.
+  local telescope_ready = false
+  local function ensure_telescope()
+    if telescope_ready then return end
+    telescope_ready = true
+    -- See `:help telescope` and `:help telescope.setup()`
+    require('telescope').setup {
+      -- defaults = { mappings = { i = { ['<c-enter>'] = 'to_fuzzy_refine' } } },
+      -- pickers = {}
+      extensions = {
+        ['ui-select'] = { require('telescope.themes').get_dropdown() },
+      },
+    }
+    pcall(require('telescope').load_extension, 'fzf')
+    pcall(require('telescope').load_extension, 'ui-select')
+  end
 
   -- See `:help telescope.builtin`
-  local builtin = require 'telescope.builtin'
+  local builtin = setmetatable({}, {
+    __index = function(_, key)
+      return function(...)
+        ensure_telescope()
+        return require('telescope.builtin')[key](...)
+      end
+    end,
+  })
+
+  -- Send the first `vim.ui.select` (e.g. LSP code actions) through Telescope too,
+  -- since its ui-select handler is only registered once Telescope loads.
+  do
+    local base_select = vim.ui.select
+    local wrapper
+    wrapper = function(items, opts, on_choice)
+      ensure_telescope()
+      local handler = vim.ui.select
+      if handler == wrapper then handler = base_select end
+      return handler(items, opts, on_choice)
+    end
+    vim.ui.select = wrapper
+  end
   vim.keymap.set('n', '<leader>sh', builtin.help_tags, { desc = '[S]earch [H]elp' })
   vim.keymap.set('n', '<leader>sk', builtin.keymaps, { desc = '[S]earch [K]eymaps' })
   vim.keymap.set('n', '<leader>sf', builtin.find_files, { desc = '[S]earch [F]iles' })
@@ -620,7 +654,7 @@ do
 
   -- Useful status updates for LSP.
   vim.pack.add { gh 'j-hui/fidget.nvim' }
-  require('fidget').setup {}
+  startup.on_ui_ready(function() require('fidget').setup {} end)
 
   --  This function gets run when an LSP attaches to a particular buffer.
   --    That is to say, every time a new file is opened that is associated with
@@ -765,6 +799,7 @@ do
   -- You can press `g?` for help in this menu.
   local ensure_installed = vim.tbl_keys(servers or {})
   vim.list_extend(ensure_installed, {
+    'delve', -- Go debugger (previously auto-installed by mason-nvim-dap)
     -- You can add other tools here that you want Mason to install
   })
 
@@ -972,7 +1007,22 @@ do
   --  Here are some example plugins that I've included in the Kickstart repository.
   --  Uncomment any of the lines below to enable them (you will need to restart nvim).
   --
-  require 'kickstart.plugins.debug'
+  -- Debugging (DAP): loaded on first use. The real keymaps live in
+  --  `kickstart.plugins.debug`; these stubs load that module, then replay the
+  --  key that triggered them so the first press still does what you expect.
+  do
+    local dap_keys = { '<F1>', '<F2>', '<F3>', '<F5>', '<F7>', '<leader>b', '<leader>B' }
+    for _, key in ipairs(dap_keys) do
+      vim.keymap.set('n', key, function()
+        for _, k in ipairs(dap_keys) do
+          pcall(vim.keymap.del, 'n', k)
+        end
+        require 'kickstart.plugins.debug'
+        vim.api.nvim_feedkeys(vim.api.nvim_replace_termcodes(key, true, false, true), 'm', false)
+      end, { desc = 'Debug: load DAP on first use' })
+    end
+  end
+
   require 'kickstart.plugins.indent_line'
   -- require 'kickstart.plugins.lint'
   require 'kickstart.plugins.autopairs'
