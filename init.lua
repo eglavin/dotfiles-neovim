@@ -134,6 +134,9 @@ do
   -- Display tab characters as 2 spaces wide
   vim.o.tabstop = 2
 
+  -- Make auto-indent use the same width as tabstop (0 = follow 'tabstop')
+  vim.o.shiftwidth = 0
+
   -- Enable undo/redo changes even after closing and reopening a file
   vim.o.undofile = true
 
@@ -514,7 +517,12 @@ do
     -- See `:help telescope` and `:help telescope.setup()`
     require('telescope').setup {
       -- defaults = { mappings = { i = { ['<c-enter>'] = 'to_fuzzy_refine' } } },
-      -- pickers = {}
+      -- Include dotfiles in file and grep searches, but skip the .git directory
+      pickers = {
+        find_files = { find_command = { 'rg', '--files', '--hidden', '--glob', '!**/.git/*' } },
+        live_grep = { additional_args = { '--hidden', '--glob', '!**/.git/*' } },
+        grep_string = { additional_args = { '--hidden', '--glob', '!**/.git/*' } },
+      },
       extensions = {
         ['ui-select'] = { require('telescope.themes').get_dropdown() },
       },
@@ -964,7 +972,7 @@ do
     local has_indent_query = vim.treesitter.query.get(language, 'indents') ~= nil
 
     -- Enable treesitter based indentation
-    if has_indent_query then vim.bo.indentexpr = "v:lua.require'nvim-treesitter'.indentexpr()" end
+    if has_indent_query then vim.bo[buf].indentexpr = "v:lua.require'nvim-treesitter'.indentexpr()" end
   end
 
   local available_parsers = require('nvim-treesitter').get_available()
